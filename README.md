@@ -1,5 +1,14 @@
 # Fleet Telemetry Reliability Pipeline
 
+## Tech Stack
+
+- **Apache Kafka** — streams telemetry events between the producer and consumers
+- **Python** — simulator, consumer, anomaly detector, and Airflow DAG logic
+- **AWS RDS (PostgreSQL)** — persists raw telemetry, daily summaries, reliability metrics, and alerts
+- **Apache Airflow** (Dockerized) — orchestrates the daily batch rollup
+- **Docker / Docker Compose** — runs Kafka and Airflow as isolated services
+- **SQL** — root cause analysis queries against the data
+
 ## Problem Statement
 
 A fleet of vehicles is constantly generating sensor data: speed, battery level, motor temperature, and location. Buried in that constant stream are early warning signs of vehicles that are degrading or at risk of failure, such as motors running hot, batteries draining abnormally fast, or speeds spiking. A reliability engineer can't manually watch raw second-by-second data for every vehicle, since there's too much of it and most of it is normal.
@@ -85,16 +94,16 @@ One row per vehicle, computed over a rolling 7 day window. Built by summarizing 
 | `dominant_fault_type` | Most common reason behind the at-risk days | Most frequent risk reason in the last 7 days |
 | `reliability_score` | Composite 0 to 100 reliability score | 100 minus (failure_rate_per_100km x 20) minus (battery_risk_per_cycle x 20) |
 
-## Design Decisions
+## Getting Started
 
-**Why speed, battery, and motor temperature, and not other signals.** Each one maps to a distinct, well understood failure mode. Motor temperature is a precursor to component damage. Battery level and drain rate are the most important health signal for an electric vehicle specifically. Speed anomalies catch erratic behavior or sensor faults. These three were chosen because they cover the most common EV health concerns with the least amount of data.
+**Prerequisites:** Docker, Python 3.x, a PostgreSQL database (e.g. AWS RDS).
 
-**Why location is kept but not used for distance.** GPS is valuable metadata, but computing distance from GPS points requires knowing the direction the vehicle traveled between readings, not just the start and end coordinates. Our simulator moves GPS by a small random amount every tick, independent of actual speed, so distance derived from GPS would measure random noise, not real movement. Location is kept in the raw data for context, but it does not drive any calculation.
+1. Copy `.env.example` to `.env` and fill in your database credentials and an `AIRFLOW_SECRET_KEY` (generate one with `openssl rand -hex 16`).
+2. Start Kafka: `docker compose -f docker-compose.yml up -d`
+3. Create the Kafka topics: `python setup_topics.py`
+4. Create the database schema: `python setup_database.py`
+5. Start the streaming layer, each in its own terminal: `python simulator.py`, `python consumer.py`, `python anomly_detector.py`
+6. Start Airflow: `docker compose -f docker-compose.airflow.yml up -d`
+7. Open the Airflow UI at `http://localhost:8085` (`admin` / `admin`), unpause `fleet_daily_summary`, and trigger it
+8. Explore the results with the queries in `root_cause_queries.sql`
 
-**Why odometer_km instead of calculating distance from GPS.** Real vehicles do not calculate distance from GPS either. They use a physical odometer driven by wheel speed sensors, which keeps counting accurately even if the GPS signal or network connection drops out. We simulate the same idea: a running total that increases directly from speed, the same way a real odometer works. This also means distance for any period, even after a long gap with no data, like a vehicle parked for hours, is a simple subtraction of two odometer readings and is never affected by what happened during the gap.
-
-**Why cumulative_charge_pct instead of counting charging events.** Counting how many times a vehicle starts charging overcounts cycles, since a vehicle topped off five times a day for a few percent each is nowhere close to five full cycles. Real battery management systems track cumulative energy that has flowed into the battery and divide by the battery's capacity to get a true cycle count. We simulate the same idea: a running total that only increases when the battery is actually gaining charge, ignoring any decreases, so cycle count reflects real usage instead of how many times a cable happened to get plugged in.
-
-**Why failure rate is normalized per 100 km instead of per calendar day.** Two vehicles with the same number of bad days are not equally reliable if one drove ten times farther than the other. Normalizing by distance is also not a made up idea: the automotive industry's J.D. Power dependability studies use a similar metric called Problems Per 100 Vehicles. Our metric applies the same logic to distance instead of vehicle count.
-
-**Why the reliability_score weights are simple round numbers.** There is no external industry standard for combining multiple reliability factors into one composite score, that part is always a custom design choice. Rather than over engineer the weighting, both contributing factors were given equal weight of 20 points per unit, with the goal of producing a score that is good enough to rank vehicles meaningfully, not a precisely calibrated formula.

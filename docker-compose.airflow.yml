@@ -1,0 +1,72 @@
+name: fleet-telemetry-airflow
+
+services:
+
+  # ── Airflow metadata database ──
+  airflow-postgres:
+    image: postgres:15-alpine
+    container_name: fleet-airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - fleet-airflow-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Airflow (webserver + scheduler in one container) ──
+  airflow:
+    image: apache/airflow:2.9.3
+    container_name: fleet-airflow
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+    ports:
+      - "8085:8085"
+    environment:
+      # Airflow core config
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+      AIRFLOW__WEBSERVER__WEB_SERVER_PORT: '8085'
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+
+      # Install python-dotenv at startup
+      _PIP_ADDITIONAL_REQUIREMENTS: 'python-dotenv'
+
+      # RDS credentials — read from the .env file in this directory, never hardcoded
+      RDS_HOST: ${RDS_HOST}
+      RDS_PORT: ${RDS_PORT}
+      RDS_DB: ${RDS_DB}
+      RDS_USER: ${RDS_USER}
+      RDS_PASSWORD: ${RDS_PASSWORD}
+
+    volumes:
+      - ./full_dags:/opt/airflow/dags
+      - ./reliability_analysis.py:/opt/airflow/reliability_analysis.py
+      - fleet-airflow-logs:/opt/airflow/logs
+
+    entrypoint: /bin/bash
+    command: >
+      -c "
+      pip install python-dotenv --quiet --no-cache-dir &&
+      airflow db migrate &&
+      airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@fleet.local 2>/dev/null || true &&
+      airflow webserver --port 8085 &
+      airflow scheduler
+      "
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8085/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  fleet-airflow-postgres-data:
+  fleet-airflow-logs:

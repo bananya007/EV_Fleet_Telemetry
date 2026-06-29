@@ -19,7 +19,7 @@ Even once the raw data is summarized, a simple day-by-day count of problems is m
 
 ## Deliverable
 
-A pipeline that takes raw vehicle telemetry and produces one end result: a dashboard that ranks every vehicle in the fleet by a reliability score that accounts for distance traveled and charge cycles, shows what's wrong with the unhealthy ones (overheating, speed, or battery), and lets someone glance at it once a day and know exactly where to focus.
+A pipeline that takes raw vehicle telemetry and produces a reliability score for every vehicle in the fleet, normalized against distance traveled and charge cycles rather than calendar time, along with the underlying data needed to identify which vehicles need attention and why (overheating, speed, or battery related).
 
 ## Pipeline Architecture
 
